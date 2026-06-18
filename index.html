@@ -388,15 +388,35 @@ function Schedule({ me }) {
   const [muscle, setMuscle] = useState("Chest");
   const [f, setF] = useState(BLANK_W());
   const [active, setActive] = useState(null);
+  const [routines, setRoutines] = useState([]);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => db.collection("workouts").orderBy("date").onSnapshot(
     s => setItems(s.docs.map(d => ({ id: d.id, ...d.data() }))),
     () => setItems("error")
   ), []);
+  useEffect(() => db.collection("routines").orderBy("createdAt").onSnapshot(
+    s => setRoutines(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+    () => {}
+  ), []);
 
   function loadRoutine(r) {
     setF(prev => ({ ...prev, title: r.name, ex: r.ex.map(a => ({ name: a[0], sets: a[1], reps: a[2], weight: "" })) }));
   }
+  function loadCustom(r) {
+    setF(prev => ({ ...prev, title: r.name, ex: (r.ex || []).map(a => ({ name: a.name, sets: a.sets, reps: a.reps, weight: "" })) }));
+  }
+  async function saveTemplate() {
+    const title = f.title.trim();
+    if (!title || f.ex.length === 0) return;
+    await db.collection("routines").add({
+      name: title,
+      ex: f.ex.map(e => ({ name: e.name, sets: Number(e.sets) || 0, reps: Number(e.reps) || 0 })),
+      createdBy: me.key, createdAt: serverTime()
+    });
+    setSaved(true); setTimeout(() => setSaved(false), 1500);
+  }
+  const delTemplate = (id) => db.collection("routines").doc(id).delete();
   const addEx = (name) => setF(prev => ({ ...prev, ex: [...prev.ex, { name, sets: 3, reps: 10, weight: "" }] }));
   const removeExByName = (name) => setF(prev => ({ ...prev, ex: prev.ex.filter(e => e.name !== name) }));
   const removeEx = (i) => setF(prev => ({ ...prev, ex: prev.ex.filter((_, idx) => idx !== i) }));
@@ -524,11 +544,24 @@ function Schedule({ me }) {
               </div>
 
               <div>
-                <div className="text-xs uppercase tracking-wider text-mut mb-2">Quick start</div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs uppercase tracking-wider text-mut">Quick start</div>
+                  <button onClick={saveTemplate} disabled={!f.title.trim() || f.ex.length === 0}
+                    className="text-mark text-xs font-medium disabled:opacity-40">{saved ? "Saved ✓" : "Save as template"}</button>
+                </div>
                 <div className="flex gap-2 overflow-x-auto pb-1 -mx-5 px-5">
                   {ROUTINES.map(r => (
                     <button key={r.name} onClick={() => loadRoutine(r)}
                       className="shrink-0 px-3.5 py-2 rounded-xl border border-line text-sm active:border-mark">{r.name}</button>
+                  ))}
+                  {routines.map(r => (
+                    <div key={r.id} className="shrink-0 relative">
+                      <button onClick={() => loadCustom(r)}
+                        style={{ borderColor: "rgba(96,165,250,0.5)" }}
+                        className="px-3.5 py-2 pr-7 rounded-xl border text-sm text-mark">{r.name}</button>
+                      <button onClick={() => delTemplate(r.id)}
+                        className="absolute top-1/2 -translate-y-1/2 right-1.5 text-mut text-xs leading-none px-1">×</button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -596,6 +629,49 @@ function Schedule({ me }) {
       )}
 
       {active && <WorkoutMode workout={active} me={me} onClose={() => setActive(null)} />}
+    </div>
+  );
+}
+
+/* ---------- History ---------- */
+function History({ me }) {
+  const [items, setItems] = useState(null);
+  useEffect(() => db.collection("workouts").where("done", "==", true).onSnapshot(
+    s => setItems(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+    () => setItems("error")
+  ), []);
+  const done = (Array.isArray(items) ? items : []).slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return (
+    <div className="px-5">
+      <SectionHead title="History" sub={done.length + " session" + (done.length === 1 ? "" : "s") + " logged"} />
+      {items === null && <Loading />}
+      {items === "error" && <Empty text="Can't reach the database. Publish the Firestore security rules, then refresh." />}
+      {Array.isArray(items) && done.length === 0 && <Empty text="No completed workouts yet. Finish a session and it'll show up here." />}
+      <div className="space-y-2">
+        {done.map(it => (
+          <div key={it.id} className="fade-in bg-panel border border-line rounded-2xl p-4">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold">{it.title}</span>
+              <span className="text-xs text-mut">{prettyDate(it.date)}</span>
+            </div>
+            <div className="mt-1">
+              {it.doneBy
+                ? <span className="text-[11px]" style={{ color: colorFor(it.doneBy) }}>Done by {nameFor(it.doneBy)}</span>
+                : <Tag k={it.forWho} />}
+            </div>
+            {Array.isArray(it.exercises) && it.exercises.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {it.exercises.map((e, i) => (
+                  <div key={i} className="flex items-baseline gap-2 text-[13px]">
+                    <span>{e.name}</span>
+                    <span className="text-mut">{e.sets}×{e.reps}{e.weight ? " · " + e.weight : ""}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -812,6 +888,7 @@ function Empty({ text }) { return <div className="text-center text-mut text-sm p
 /* ---------- Shell ---------- */
 const TABS = [
   { k: "schedule", label: "Schedule", icon: "▦" },
+  { k: "history", label: "History", icon: "≣" },
   { k: "chat", label: "Chat", icon: "✦" },
   { k: "goals", label: "Goals", icon: "◎" },
   { k: "food", label: "Food", icon: "❍" },
@@ -842,6 +919,7 @@ function Shell({ user }) {
 
       <main className="flex-1 pt-4 nav-pad">
         {tab === "schedule" && <Schedule me={me} />}
+        {tab === "history" && <History me={me} />}
         {tab === "chat" && <Chat me={me} />}
         {tab === "goals" && <Goals me={me} />}
         {tab === "food" && <Food me={me} />}
