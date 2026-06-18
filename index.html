@@ -229,58 +229,91 @@ function Login() {
 }
 
 /* ---------- Schedule ---------- */
+function NumField({ label, value, onChange, ph }) {
+  return (
+    <div className="flex-1">
+      <div className="text-[10px] uppercase tracking-wider text-mut mb-1">{label}</div>
+      <input value={value === undefined || value === null ? "" : value} onChange={e => onChange(e.target.value)} inputMode="numeric" placeholder={ph || ""}
+        className="w-full bg-panel2 border border-line rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:border-mark" />
+    </div>
+  );
+}
+
+const EXERCISES = {
+  Chest: ["Barbell Bench Press", "Incline Dumbbell Press", "Dumbbell Bench Press", "Incline Barbell Press", "Cable Fly", "Pec Deck", "Push-Up", "Chest Dip"],
+  Back: ["Deadlift", "Pull-Up", "Lat Pulldown", "Barbell Row", "Dumbbell Row", "Seated Cable Row", "T-Bar Row", "Face Pull"],
+  Legs: ["Back Squat", "Front Squat", "Leg Press", "Romanian Deadlift", "Walking Lunge", "Bulgarian Split Squat", "Leg Extension", "Leg Curl", "Hip Thrust", "Calf Raise"],
+  Shoulders: ["Overhead Press", "Dumbbell Shoulder Press", "Lateral Raise", "Front Raise", "Rear Delt Fly", "Arnold Press", "Upright Row"],
+  Arms: ["Barbell Curl", "Dumbbell Curl", "Hammer Curl", "Preacher Curl", "Tricep Pushdown", "Overhead Tricep Extension", "Skull Crusher", "Close-Grip Bench Press"],
+  Core: ["Plank", "Hanging Leg Raise", "Cable Crunch", "Russian Twist", "Ab Wheel", "Sit-Up", "Mountain Climber"],
+  Cardio: ["Treadmill Run", "Incline Walk", "Rowing", "Cycling", "Stair Climber", "Jump Rope", "Elliptical"],
+};
+
+const ROUTINES = [
+  { name: "Push Day", ex: [["Barbell Bench Press", 4, 8], ["Overhead Press", 3, 10], ["Incline Dumbbell Press", 3, 10], ["Lateral Raise", 3, 15], ["Tricep Pushdown", 3, 12], ["Chest Dip", 3, 10]] },
+  { name: "Pull Day", ex: [["Deadlift", 4, 6], ["Pull-Up", 4, 8], ["Barbell Row", 4, 10], ["Seated Cable Row", 3, 12], ["Face Pull", 3, 15], ["Barbell Curl", 3, 12]] },
+  { name: "Leg Day", ex: [["Back Squat", 4, 8], ["Romanian Deadlift", 3, 10], ["Leg Press", 3, 12], ["Leg Curl", 3, 12], ["Leg Extension", 3, 15], ["Calf Raise", 4, 15]] },
+  { name: "Upper", ex: [["Barbell Bench Press", 4, 8], ["Barbell Row", 4, 8], ["Overhead Press", 3, 10], ["Lat Pulldown", 3, 12], ["Lateral Raise", 3, 15], ["Barbell Curl", 3, 12], ["Tricep Pushdown", 3, 12]] },
+  { name: "Lower", ex: [["Back Squat", 4, 8], ["Romanian Deadlift", 4, 10], ["Walking Lunge", 3, 12], ["Leg Curl", 3, 12], ["Calf Raise", 4, 15], ["Hanging Leg Raise", 3, 15]] },
+  { name: "Full Body", ex: [["Back Squat", 3, 8], ["Barbell Bench Press", 3, 8], ["Barbell Row", 3, 8], ["Overhead Press", 3, 10], ["Romanian Deadlift", 3, 10], ["Plank", 3, 45]] },
+  { name: "Glutes & Legs", ex: [["Hip Thrust", 4, 10], ["Bulgarian Split Squat", 3, 12], ["Romanian Deadlift", 3, 10], ["Leg Press", 3, 12], ["Leg Curl", 3, 12], ["Calf Raise", 4, 15]] },
+  { name: "Arms", ex: [["Barbell Curl", 4, 10], ["Close-Grip Bench Press", 4, 10], ["Hammer Curl", 3, 12], ["Tricep Pushdown", 3, 12], ["Preacher Curl", 3, 12], ["Overhead Tricep Extension", 3, 12]] },
+  { name: "Core", ex: [["Plank", 3, 45], ["Hanging Leg Raise", 3, 15], ["Cable Crunch", 3, 15], ["Russian Twist", 3, 20], ["Ab Wheel", 3, 10]] },
+];
+
+const BLANK_W = () => ({ date: todayStr(), title: "", forWho: "both", ex: [], notes: "" });
+
 function Schedule({ me }) {
   const [items, setItems] = useState(null);
-  const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("all");
-  const [f, setF] = useState({ date: todayStr(), title: "", forWho: "both", details: "" });
+  const [open, setOpen] = useState(false);
+  const [picker, setPicker] = useState(false);
+  const [muscle, setMuscle] = useState("Chest");
+  const [f, setF] = useState(BLANK_W());
 
-  useEffect(() => db.collection("workouts").orderBy("date").onSnapshot(s =>
-    setItems(s.docs.map(d => ({ id: d.id, ...d.data() })))), []);
+  useEffect(() => db.collection("workouts").orderBy("date").onSnapshot(
+    s => setItems(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+    () => setItems("error")
+  ), []);
 
-  async function add() {
-    if (!f.title.trim()) return;
-    await db.collection("workouts").add({ ...f, title: f.title.trim(), details: f.details.trim(), done: false, doneBy: null, createdBy: me.key, createdAt: serverTime() });
-    setF({ date: todayStr(), title: "", forWho: "both", details: "" });
-    setOpen(false);
+  function loadRoutine(r) {
+    setF(prev => ({ ...prev, title: r.name, ex: r.ex.map(a => ({ name: a[0], sets: a[1], reps: a[2], weight: "" })) }));
+  }
+  const addEx = (name) => setF(prev => ({ ...prev, ex: [...prev.ex, { name, sets: 3, reps: 10, weight: "" }] }));
+  const removeExByName = (name) => setF(prev => ({ ...prev, ex: prev.ex.filter(e => e.name !== name) }));
+  const removeEx = (i) => setF(prev => ({ ...prev, ex: prev.ex.filter((_, idx) => idx !== i) }));
+  const updateEx = (i, field, val) => setF(prev => ({ ...prev, ex: prev.ex.map((e, idx) => idx === i ? { ...e, [field]: val } : e) }));
+
+  async function save() {
+    const title = f.title.trim();
+    if (!title) return;
+    await db.collection("workouts").add({
+      date: f.date, title, forWho: f.forWho,
+      exercises: f.ex.map(e => ({ name: e.name, sets: Number(e.sets) || 0, reps: Number(e.reps) || 0, weight: (e.weight || "").toString().trim() })),
+      notes: f.notes.trim(), done: false, doneBy: null, createdBy: me.key, createdAt: serverTime()
+    });
+    setF(BLANK_W()); setPicker(false); setOpen(false);
   }
   const toggle = (it) => db.collection("workouts").doc(it.id).update({ done: !it.done, doneBy: !it.done ? me.key : null });
   const del = (id) => db.collection("workouts").doc(id).delete();
 
-  const list = (items || []).filter(it => filter === "all" || it.forWho === filter || it.forWho === "both");
+  const list = (Array.isArray(items) ? items : []).filter(it => filter === "all" || it.forWho === filter || it.forWho === "both");
   const groups = {};
   list.forEach(it => { (groups[it.date] = groups[it.date] || []).push(it); });
   const dates = Object.keys(groups).sort();
 
   return (
     <div className="px-5">
-      <SectionHead title="Schedule" sub="Plan your sessions" onAdd={() => setOpen(!open)} open={open} />
+      <SectionHead title="Schedule" sub="Plan your sessions" onAdd={() => { setF(BLANK_W()); setOpen(true); }} open={false} />
       <div className="flex gap-2 mb-4">
         {[["all", "All"], ["mark", "Mark"], ["aubree", "Aubree"]].map(([k, l]) =>
           <button key={k} onClick={() => setFilter(k)}
             className={"px-3 py-1.5 rounded-full text-sm border " + (filter === k ? "border-mark text-mark" : "border-line text-mut")}>{l}</button>)}
       </div>
 
-      {open && (
-        <div className="fade-in bg-panel border border-line rounded-2xl p-4 mb-5 space-y-3">
-          <input value={f.title} onChange={e => setF({ ...f, title: e.target.value })} placeholder="Workout title (e.g. Push Day)"
-            className="w-full bg-panel2 border border-line rounded-xl px-3 py-2.5 outline-none focus:border-mark" />
-          <div className="flex gap-2">
-            <input type="date" value={f.date} onChange={e => setF({ ...f, date: e.target.value })}
-              className="flex-1 bg-panel2 border border-line rounded-xl px-3 py-2.5 outline-none focus:border-mark text-sm" />
-            <select value={f.forWho} onChange={e => setF({ ...f, forWho: e.target.value })}
-              className="bg-panel2 border border-line rounded-xl px-3 py-2.5 outline-none focus:border-mark text-sm">
-              <option value="both">Both</option><option value="mark">Mark</option><option value="aubree">Aubree</option>
-            </select>
-          </div>
-          <textarea value={f.details} onChange={e => setF({ ...f, details: e.target.value })} rows="3" placeholder="Exercises / notes (one per line)"
-            className="w-full bg-panel2 border border-line rounded-xl px-3 py-2.5 outline-none focus:border-mark text-sm resize-none" />
-          <button onClick={add} className="w-full py-2.5 rounded-xl bg-mark text-ink font-semibold">Add workout</button>
-        </div>
-      )}
-
       {items === null && <Loading />}
-      {items && dates.length === 0 && <Empty text="No workouts scheduled yet. Tap + to plan your first session." />}
+      {items === "error" && <Empty text="Can't reach the database. Publish the Firestore security rules, then refresh." />}
+      {Array.isArray(items) && dates.length === 0 && <Empty text="No workouts scheduled yet. Tap + to plan your first session." />}
 
       <div className="space-y-6">
         {dates.map(date => (
@@ -300,7 +333,18 @@ function Schedule({ me }) {
                         <span className={"font-semibold " + (it.done ? "line-through text-mut" : "")}>{it.title}</span>
                         <Tag k={it.forWho} />
                       </div>
+                      {Array.isArray(it.exercises) && it.exercises.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {it.exercises.map((e, i) => (
+                            <div key={i} className="flex items-baseline gap-2 text-[13px]">
+                              <span>{e.name}</span>
+                              <span className="text-mut">{e.sets}×{e.reps}{e.weight ? " · " + e.weight : ""}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {it.details && <div className="text-sm text-mut mt-1 whitespace-pre-line">{it.details}</div>}
+                      {it.notes && <div className="text-xs text-mut mt-2">{it.notes}</div>}
                       {it.done && it.doneBy && <div className="text-[11px] mt-1.5" style={{ color: colorFor(it.doneBy) }}>Done by {nameFor(it.doneBy)}</div>}
                     </div>
                     <button onClick={() => del(it.id)} className="text-mut text-lg leading-none px-1">×</button>
@@ -311,6 +355,98 @@ function Schedule({ me }) {
           </div>
         ))}
       </div>
+
+      {open && (
+        <div className="fixed inset-0 z-40 bg-ink overflow-y-auto">
+          <div className="max-w-md mx-auto min-h-full">
+            <div className="top-pad sticky top-0 z-10 bg-ink/95 backdrop-blur border-b border-line px-5 py-3 flex items-center justify-between">
+              <button onClick={() => { setOpen(false); setPicker(false); }} className="text-mut text-2xl leading-none w-10 text-left">×</button>
+              <span className="font-semibold">New workout</span>
+              <button onClick={save} className="text-mark font-semibold w-12 text-right">Save</button>
+            </div>
+            <div className="px-5 py-4 space-y-5 pb-24">
+              <input value={f.title} onChange={e => setF({ ...f, title: e.target.value })} placeholder="Workout title (e.g. Push Day)"
+                className="w-full text-lg bg-transparent border-b border-line py-2 outline-none focus:border-mark" />
+              <div className="flex gap-2">
+                <input type="date" value={f.date} onChange={e => setF({ ...f, date: e.target.value })}
+                  className="flex-1 bg-panel border border-line rounded-xl px-3 py-2.5 text-sm outline-none focus:border-mark" />
+                <select value={f.forWho} onChange={e => setF({ ...f, forWho: e.target.value })}
+                  className="bg-panel border border-line rounded-xl px-3 py-2.5 text-sm outline-none focus:border-mark">
+                  <option value="both">Both</option><option value="mark">Mark</option><option value="aubree">Aubree</option>
+                </select>
+              </div>
+
+              <div>
+                <div className="text-xs uppercase tracking-wider text-mut mb-2">Quick start</div>
+                <div className="flex gap-2 overflow-x-auto pb-1 -mx-5 px-5">
+                  {ROUTINES.map(r => (
+                    <button key={r.name} onClick={() => loadRoutine(r)}
+                      className="shrink-0 px-3.5 py-2 rounded-xl border border-line text-sm active:border-mark">{r.name}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs uppercase tracking-wider text-mut">Exercises</div>
+                  <button onClick={() => setPicker(true)} className="text-mark text-sm font-medium">+ Add exercise</button>
+                </div>
+                {f.ex.length === 0 && <div className="text-sm text-mut py-3">Pick a routine above, or add exercises from the library.</div>}
+                <div className="space-y-2">
+                  {f.ex.map((e, i) => (
+                    <div key={i} className="bg-panel border border-line rounded-xl p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-sm">{e.name}</span>
+                        <button onClick={() => removeEx(i)} className="text-mut text-lg leading-none px-1">×</button>
+                      </div>
+                      <div className="flex gap-2 mt-2">
+                        <NumField label="Sets" value={e.sets} onChange={v => updateEx(i, "sets", v)} />
+                        <NumField label="Reps" value={e.reps} onChange={v => updateEx(i, "reps", v)} />
+                        <NumField label="Weight" value={e.weight} onChange={v => updateEx(i, "weight", v)} ph="lb" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <textarea value={f.notes} onChange={e => setF({ ...f, notes: e.target.value })} rows="2" placeholder="Notes (optional)"
+                className="w-full bg-panel border border-line rounded-xl px-3 py-2.5 text-sm outline-none focus:border-mark resize-none" />
+            </div>
+          </div>
+
+          {picker && (
+            <div className="fixed inset-0 z-50 bg-ink overflow-y-auto">
+              <div className="max-w-md mx-auto min-h-full">
+                <div className="top-pad sticky top-0 z-10 bg-ink/95 backdrop-blur border-b border-line px-5 py-3 flex items-center justify-between">
+                  <span className="font-semibold">Add exercises</span>
+                  <button onClick={() => setPicker(false)} className="text-mark font-semibold">Done</button>
+                </div>
+                <div className="px-5 py-3 border-b border-line">
+                  <div className="flex gap-2 overflow-x-auto pb-1 -mx-5 px-5">
+                    {Object.keys(EXERCISES).map(m => (
+                      <button key={m} onClick={() => setMuscle(m)}
+                        className={"shrink-0 px-3 py-1.5 rounded-full text-sm border " + (muscle === m ? "border-mark text-mark" : "border-line text-mut")}>{m}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="px-5 py-3 space-y-2 pb-12">
+                  {EXERCISES[muscle].map(name => {
+                    const added = f.ex.some(e => e.name === name);
+                    return (
+                      <button key={name} onClick={() => added ? removeExByName(name) : addEx(name)}
+                        style={{ borderColor: added ? "#60A5FA" : "#1E2530", background: added ? "rgba(96,165,250,0.10)" : "transparent" }}
+                        className="w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left">
+                        <span className="text-sm">{name}</span>
+                        <span className="text-sm" style={{ color: added ? "#60A5FA" : "#727E90" }}>{added ? "✓ Added" : "+"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
