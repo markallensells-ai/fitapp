@@ -263,6 +263,123 @@ const ROUTINES = [
 
 const BLANK_W = () => ({ date: todayStr(), title: "", forWho: "both", ex: [], notes: "" });
 
+function isoOf(d) { return d.toISOString().slice(0, 10); }
+function weekCount(items, key) {
+  const today = new Date(todayStr() + "T00:00:00");
+  const start = new Date(today); start.setDate(today.getDate() - 6);
+  const lo = isoOf(start), hi = isoOf(today);
+  return items.filter(it => it.done && it.doneBy === key && it.date >= lo && it.date <= hi).length;
+}
+function streakFor(items, key) {
+  const days = new Set(items.filter(it => it.done && it.doneBy === key).map(it => it.date));
+  let d = new Date(todayStr() + "T00:00:00");
+  if (!days.has(isoOf(d))) d.setDate(d.getDate() - 1);
+  let n = 0;
+  while (days.has(isoOf(d))) { n++; d.setDate(d.getDate() - 1); }
+  return n;
+}
+
+/* ---------- Workout Mode ---------- */
+function WorkoutMode({ workout, me, onClose }) {
+  const exs = Array.isArray(workout.exercises) ? workout.exercises : [];
+  const [done, setDone] = useState({});
+  const [rest, setRest] = useState(90);
+  const [left, setLeft] = useState(0);
+  const [running, setRunning] = useState(false);
+  const tRef = useRef(null);
+
+  useEffect(() => {
+    if (running && left > 0) tRef.current = setTimeout(() => setLeft(left - 1), 1000);
+    else if (running && left === 0) { setRunning(false); beep(); }
+    return () => clearTimeout(tRef.current);
+  }, [running, left]);
+
+  function beep() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = "sine"; o.frequency.value = 880;
+      g.gain.setValueAtTime(0.15, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
+      o.start(); o.stop(ctx.currentTime + 0.42);
+    } catch (e) {}
+    if (navigator.vibrate) navigator.vibrate(180);
+  }
+  function toggleSet(i, s) {
+    const k = i + "-" + s;
+    const on = !done[k];
+    setDone(prev => ({ ...prev, [k]: on }));
+    if (on) { setLeft(rest); setRunning(true); }
+  }
+  async function finish() {
+    await db.collection("workouts").doc(workout.id).update({ done: true, doneBy: me.key });
+    onClose();
+  }
+  const totalSets = exs.reduce((a, e) => a + (Number(e.sets) || 0), 0);
+  const doneCount = Object.values(done).filter(Boolean).length;
+  const fmt = s => Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+
+  return (
+    <div className="fixed inset-0 z-50 bg-ink overflow-y-auto">
+      <div className="max-w-md mx-auto min-h-full pb-44">
+        <div className="top-pad sticky top-0 z-10 bg-ink/95 backdrop-blur border-b border-line px-5 py-3 flex items-center justify-between">
+          <button onClick={onClose} className="text-mut text-2xl leading-none w-10 text-left">×</button>
+          <div className="text-center">
+            <div className="font-semibold leading-tight">{workout.title}</div>
+            <div className="text-[11px] text-mut">{doneCount}/{totalSets} sets done</div>
+          </div>
+          <button onClick={finish} className="text-mark font-semibold w-14 text-right">Finish</button>
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          {exs.length === 0 && <Empty text="This workout has no exercises yet. Add some from the Schedule." />}
+          {exs.map((e, i) => (
+            <div key={i} className="bg-panel border border-line rounded-2xl p-4">
+              <div className="flex items-baseline justify-between">
+                <span className="font-semibold">{e.name}</span>
+                <span className="text-xs text-mut">{e.sets}×{e.reps}{e.weight ? " · " + e.weight : ""}</span>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {Array.from({ length: Number(e.sets) || 0 }).map((_, s) => {
+                  const on = !!done[i + "-" + s];
+                  return (
+                    <button key={s} onClick={() => toggleSet(i, s)}
+                      style={{ borderColor: on ? "#60A5FA" : "#1E2530", background: on ? "#60A5FA" : "transparent", color: on ? "#080A0E" : "#F4F6FA" }}
+                      className="w-11 h-11 rounded-xl border-2 font-semibold text-sm">{s + 1}</button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="fixed bottom-0 left-0 right-0 z-20 safe-bottom border-t border-line bg-ink/95 backdrop-blur">
+        <div className="max-w-md mx-auto px-5 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-mut">Rest timer</div>
+              <div className="text-3xl font-semibold tabular-nums" style={{ color: running ? "#60A5FA" : "#F4F6FA" }}>{fmt(left)}</div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setLeft(left + 15)} className="px-3 py-2 rounded-lg border border-line text-sm">+15s</button>
+              <button onClick={() => { if (left === 0) setLeft(rest); setRunning(!running); }}
+                className="px-4 py-2 rounded-lg border border-mark text-mark text-sm font-semibold">{running ? "Pause" : "Start"}</button>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            {[60, 90, 120].map(r => (
+              <button key={r} onClick={() => { setRest(r); setLeft(r); setRunning(true); }}
+                className={"flex-1 py-1.5 rounded-lg border text-sm " + (rest === r ? "border-mark text-mark" : "border-line text-mut")}>{r}s</button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Schedule({ me }) {
   const [items, setItems] = useState(null);
   const [filter, setFilter] = useState("all");
@@ -270,6 +387,7 @@ function Schedule({ me }) {
   const [picker, setPicker] = useState(false);
   const [muscle, setMuscle] = useState("Chest");
   const [f, setF] = useState(BLANK_W());
+  const [active, setActive] = useState(null);
 
   useEffect(() => db.collection("workouts").orderBy("date").onSnapshot(
     s => setItems(s.docs.map(d => ({ id: d.id, ...d.data() }))),
@@ -285,8 +403,9 @@ function Schedule({ me }) {
   const updateEx = (i, field, val) => setF(prev => ({ ...prev, ex: prev.ex.map((e, idx) => idx === i ? { ...e, [field]: val } : e) }));
 
   async function save() {
-    const title = f.title.trim();
-    if (!title) return;
+    let title = f.title.trim();
+    if (!title && f.ex.length === 0) return;
+    if (!title) title = "Workout";
     await db.collection("workouts").add({
       date: f.date, title, forWho: f.forWho,
       exercises: f.ex.map(e => ({ name: e.name, sets: Number(e.sets) || 0, reps: Number(e.reps) || 0, weight: (e.weight || "").toString().trim() })),
@@ -297,7 +416,8 @@ function Schedule({ me }) {
   const toggle = (it) => db.collection("workouts").doc(it.id).update({ done: !it.done, doneBy: !it.done ? me.key : null });
   const del = (id) => db.collection("workouts").doc(id).delete();
 
-  const list = (Array.isArray(items) ? items : []).filter(it => filter === "all" || it.forWho === filter || it.forWho === "both");
+  const arr = Array.isArray(items) ? items : [];
+  const list = arr.filter(it => filter === "all" || it.forWho === filter || it.forWho === "both");
   const groups = {};
   list.forEach(it => { (groups[it.date] = groups[it.date] || []).push(it); });
   const dates = Object.keys(groups).sort();
@@ -305,6 +425,27 @@ function Schedule({ me }) {
   return (
     <div className="px-5">
       <SectionHead title="Schedule" sub="Plan your sessions" onAdd={() => { setF(BLANK_W()); setOpen(true); }} open={false} />
+
+      {Array.isArray(items) && (
+        <div className="bg-panel border border-line rounded-2xl p-4 mb-4">
+          <div className="text-xs uppercase tracking-wider text-mut mb-3">This week</div>
+          {["mark", "aubree"].map(k => {
+            const c = colorFor(k), wc = weekCount(arr, k), st = streakFor(arr, k);
+            return (
+              <div key={k} className="mb-3 last:mb-0">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2"><Avatar k={k} /><span className="text-sm font-medium">{nameFor(k)}</span></div>
+                  <div className="text-xs text-mut">{wc}/6 · {st > 0 ? st + " day streak" : "no streak"}</div>
+                </div>
+                <div className="h-2 rounded-full bg-panel2 overflow-hidden">
+                  <div className="h-full rounded-full" style={{ width: Math.min(wc / 6, 1) * 100 + "%", background: c }}></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div className="flex gap-2 mb-4">
         {[["all", "All"], ["mark", "Mark"], ["aubree", "Aubree"]].map(([k, l]) =>
           <button key={k} onClick={() => setFilter(k)}
@@ -346,6 +487,12 @@ function Schedule({ me }) {
                       {it.details && <div className="text-sm text-mut mt-1 whitespace-pre-line">{it.details}</div>}
                       {it.notes && <div className="text-xs text-mut mt-2">{it.notes}</div>}
                       {it.done && it.doneBy && <div className="text-[11px] mt-1.5" style={{ color: colorFor(it.doneBy) }}>Done by {nameFor(it.doneBy)}</div>}
+                      {Array.isArray(it.exercises) && it.exercises.length > 0 && (
+                        <button onClick={() => setActive(it)}
+                          className="mt-3 w-full py-2 rounded-xl border border-mark text-mark text-sm font-semibold">
+                          {it.done ? "Start again" : "Start workout"}
+                        </button>
+                      )}
                     </div>
                     <button onClick={() => del(it.id)} className="text-mut text-lg leading-none px-1">×</button>
                   </div>
@@ -447,6 +594,8 @@ function Schedule({ me }) {
           )}
         </div>
       )}
+
+      {active && <WorkoutMode workout={active} me={me} onClose={() => setActive(null)} />}
     </div>
   );
 }
